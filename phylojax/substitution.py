@@ -47,7 +47,7 @@ class JC69(SubstitutionModel):
 
 class SymmetricSubstitutionModel(SubstitutionModel, ABC):
     def __init__(self, frequencies):
-        super().__init__(self, frequencies)
+        super().__init__(frequencies)
 
     def p_t(self, branch_lengths):
         Q = self.q()
