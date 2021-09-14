@@ -18,8 +18,8 @@ class ConstantCoalescent:
             axis=-1,
         )
         indices = np.argsort(node_heights)
-        heights_sorted = np.take_along_axis(node_heights, indices, 0)
-        node_mask_sorted = np.take_along_axis(node_mask, indices, 0)
+        heights_sorted = np.take_along_axis(node_heights, indices, -1)
+        node_mask_sorted = np.take_along_axis(node_mask, indices, -1)
         lineage_count = np.where(
             node_mask_sorted,
             np.full_like(self.theta, -1),
