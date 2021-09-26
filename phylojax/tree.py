@@ -25,12 +25,11 @@ def distance_to_ratios(tree):
                     heights[node.index] - bounds[node.index]
                 ) / (heights[node.parent_node.index] - bounds[node.index])
 
-    return ratios, heights[tree.seed_node.index], bounds
+    return np.array(ratios), np.array(heights[-1:]), np.array(bounds)
 
 
-def heights_to_branch_lengths(node_heights, bounds, indexing):
+def heights_to_branch_lengths(node_heights, bounds, indices_sorted):
     taxa_count = int((bounds.shape[0] + 1) / 2)
-    indices_sorted = indexing[np.argsort(indexing[:, 1])].transpose()
     return np.concatenate(
         (
             node_heights[..., indices_sorted[0, :taxa_count] - taxa_count]
@@ -42,21 +41,28 @@ def heights_to_branch_lengths(node_heights, bounds, indexing):
     )
 
 
-def transform_ratios(root_height, ratios, bounds, indexing):
-    taxa_count = ratios.shape[-1] + 2
-    x = np.concatenate((ratios, root_height), axis=-1)
-    heights = np.empty_like(x)
-    heights = jax.ops.index_update(heights, jax.ops.index[..., -1], x[..., -1])
-    for parent_id, id_ in indexing:
-        if id_ >= taxa_count:
-            heights = jax.ops.index_update(
-                heights,
-                jax.ops.index[..., id_ - taxa_count],
-                bounds[id_]
-                + x[..., id_ - taxa_count]
-                * (heights[..., parent_id - taxa_count] - bounds[id_]),
-            )
-    return heights
+def transform_ratios(ratios_root_height, bounds, indexing):
+    taxa_count = ratios_root_height.shape[-1] + 1
+    heights = np.empty_like(ratios_root_height)
+    heights = jax.ops.index_update(
+        heights, jax.ops.index[..., -1], ratios_root_height[..., -1]
+    )
+
+    def f(i, heights):
+        parent_id, id_ = indexing[i]
+        return jax.ops.index_update(
+            heights,
+            jax.ops.index[..., id_ - taxa_count],
+            bounds[id_]
+            + ratios_root_height[..., id_ - taxa_count]
+            * (heights[..., parent_id - taxa_count] - bounds[id_]),
+        )
+
+    return jax.lax.fori_loop(0, len(indexing), f, heights)
+
+
+def log_abs_det_jacobian(node_heights, indices, bounds):
+    return np.log(node_heights[..., indices] - bounds).sum(axis=-1, keepdims=True)
 
 
 def setup_indexes(tree):
@@ -101,3 +107,19 @@ def setup_dates(tree, heterochronous=False):
         oldest = None
 
     return oldest
+
+
+class NodeHeightTransform:
+    def __init__(self, bounds, indices, indices_for_jac):
+        self.bounds = bounds
+        self.indices = indices
+        self.indices_for_jac = indices_for_jac
+        self.taxa_count = int((self.bounds.shape[-1] + 1) / 2)
+
+    def __call__(self, ratios_root_height):
+        return transform_ratios(ratios_root_height, self.bounds, self.indices)
+
+    def log_abs_det_jacobian(self, x, y):
+        return log_abs_det_jacobian(
+            y, self.indices_for_jac, self.bounds[self.taxa_count : -1]
+        )
