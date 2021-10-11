@@ -1,9 +1,11 @@
 name: phylojax
 channels:
+  - bioconda
   - conda-forge
 dependencies:
-  - python=3.7
-  - numpy>=1.7
   - dendropy
   - jax
+  - jaxlib
+  - numpy>=1.18
+  - python=3.7
   - pip
