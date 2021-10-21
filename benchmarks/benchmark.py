@@ -218,7 +218,7 @@ def test(fn, g, bls, replicates, separate=False):
 def ratio_transform_jacobian(args):
     replicates = args.replicates
     tree, dna = read_tree_and_alignment(args.tree, args.input, True, True)
-    taxa_count = 69
+    taxa_count = len(tree.taxon_namespace)
     ratios, root_height, bounds = distance_to_ratios(tree)
 
     pre_indexing = []
@@ -302,7 +302,7 @@ def ratio_transform(args, separate=False):
         replicates = replicates - 1
 
     tree, dna = read_tree_and_alignment(args.tree, args.input, True, True)
-    taxa_count = 69
+    taxa_count = len(tree.taxon_namespace)
     bounds = [None] * (2 * taxa_count - 1)
     for node in tree.postorder_node_iter():
         if node.is_leaf():
@@ -356,7 +356,7 @@ def ratio_transform(args, separate=False):
 def constant_coalescent(args, separate=False):
     replicates = args.replicates
     tree, dna = read_tree_and_alignment(args.tree, args.input, True, True)
-    taxa_count = 69
+    taxa_count = len(tree.taxon_namespace)
     ratios, root_height, bounds = distance_to_ratios(tree)
 
     indices_for_ratios = []
