@@ -9,12 +9,13 @@ from jax import grad, jit, vjp
 from jax.ops import index, index_update
 
 import phylojax.treelikelihood as treelikelihood
-from phylojax.io import read_tree_and_alignment
+from phylojax.io import read_tree, read_tree_and_alignment
 from phylojax.sitepattern import get_dna_leaves_partials_compressed
 from phylojax.substitution import JC69
 from phylojax.tree import distance_to_ratios, log_abs_det_jacobian, transform_ratios
 
 jax.config.update("jax_platform_name", "cpu")
+jax.config.update("jax_enable_x64", True)
 
 
 def calculate_treelikelihoodv2(partials, weights, post_indexing, mats, freqs, props):
@@ -217,7 +218,7 @@ def test(fn, g, bls, replicates, separate=False):
 
 def ratio_transform_jacobian(args):
     replicates = args.replicates
-    tree, dna = read_tree_and_alignment(args.tree, args.input, True, True)
+    tree = read_tree(args.tree, True, True)
     taxa_count = len(tree.taxon_namespace)
     ratios, root_height, bounds = distance_to_ratios(tree)
 
@@ -301,7 +302,7 @@ def ratio_transform(args, separate=False):
     if separate:
         replicates = replicates - 1
 
-    tree, dna = read_tree_and_alignment(args.tree, args.input, True, True)
+    tree = read_tree(args.tree, True, True)
     taxa_count = len(tree.taxon_namespace)
     bounds = [None] * (2 * taxa_count - 1)
     for node in tree.postorder_node_iter():
@@ -355,7 +356,7 @@ def ratio_transform(args, separate=False):
 
 def constant_coalescent(args, separate=False):
     replicates = args.replicates
-    tree, dna = read_tree_and_alignment(args.tree, args.input, True, True)
+    tree = read_tree(args.tree, True, True)
     taxa_count = len(tree.taxon_namespace)
     ratios, root_height, bounds = distance_to_ratios(tree)
 

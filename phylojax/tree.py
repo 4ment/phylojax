@@ -2,7 +2,7 @@ import jax.numpy as np
 import jax.ops
 
 
-def distance_to_ratios(tree):
+def distance_to_ratios(tree, eps=1.0e-6):
     taxa_count = len(tree.taxon_namespace)
     bounds = [None] * (2 * taxa_count - 1)
     heights = [None] * (2 * taxa_count - 1)
@@ -15,7 +15,10 @@ def distance_to_ratios(tree):
         else:
             bounds[node.index] = max([bounds[x.index] for x in node.child_node_iter()])
             heights[node.index] = max(
-                [heights[c.index] + c.edge_length for c in node.child_node_iter()]
+                [
+                    heights[c.index] + jax.lax.clamp(eps, c.edge_length, np.inf)
+                    for c in node.child_node_iter()
+                ]
             )
 
     for node in tree.preorder_node_iter():

@@ -6,16 +6,15 @@ from dendropy import DnaCharacterMatrix, Tree
 from .tree import setup_dates, setup_indexes
 
 
-def read_tree_and_alignment(tree, alignment, dated=True, heterochornous=True, **kwargs):
-    # tree
+def read_tree(tree_path, dated=True, heterochornous=True):
     taxa = dendropy.TaxonNamespace()
     tree_format = "newick"
-    with open(tree) as fp:
+    with open(tree_path) as fp:
         if next(fp).upper().startswith("#NEXUS"):
             tree_format = "nexus"
 
     tree = Tree.get(
-        path=tree,
+        path=tree_path,
         schema=tree_format,
         tree_offset=0,
         taxon_namespace=taxa,
@@ -27,13 +26,22 @@ def read_tree_and_alignment(tree, alignment, dated=True, heterochornous=True, **
     setup_indexes(tree)
     if dated:
         setup_dates(tree, heterochornous)
+    return tree
+
+
+def read_tree_and_alignment(
+    tree_path, alignment, dated=True, heterochornous=True, **kwargs
+):
+    tree = read_tree(tree_path, dated, heterochornous)
 
     # alignment
     seqs_args = dict(schema="nexus", preserve_underscores=True)
     with open(alignment) as fp:
         if next(fp).startswith(">"):
             seqs_args = dict(schema="fasta")
-    dna = DnaCharacterMatrix.get(path=alignment, taxon_namespace=taxa, **seqs_args)
+    dna = DnaCharacterMatrix.get(
+        path=alignment, taxon_namespace=tree.taxon_namespace, **seqs_args
+    )
     sequence_count = len(dna)
     if sequence_count != len(dna.taxon_namespace):
         sys.stderr.write("taxon names in trees and alignment are different")
