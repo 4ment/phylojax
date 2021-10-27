@@ -139,8 +139,8 @@ def fluA_unrooted(args):
     t = test(calculate_treelikelihood_jit, jit(grad(fn)), bls, replicates)
 
     if args.output:
-        args.output.write(f"treelikelihood,gradient,off,{t[0]}\n")
-        args.output.write(f"treelikelihood,gradient,off,{t[1]}\n")
+        args.output.write(f"treelikelihood,evaluation,on,{t[0]}\n")
+        args.output.write(f"treelikelihood,gradient,on,{t[1]}\n")
 
     if args.all:
         print("  JIT on grad(jit(fn))")
