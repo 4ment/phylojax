@@ -6,6 +6,3 @@ dependencies:
   - dendropy
   - jax
   - jaxlib
-  - numpy>=1.18
-  - python=3.7
-  - pip
