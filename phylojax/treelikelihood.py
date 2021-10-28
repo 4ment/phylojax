@@ -1,6 +1,7 @@
+from functools import partial
+
 import jax
 import jax.numpy as np
-from jax import partial
 from jax.ops import index, index_update
 
 from .tree import heights_to_branch_lengths, transform_ratios

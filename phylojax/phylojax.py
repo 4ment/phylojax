@@ -7,7 +7,7 @@ import jax.experimental.optimizers
 import jax.numpy as np
 import jax.ops
 import jax.scipy.optimize
-from jax.api import grad, jit
+from jax import grad, jit
 from jax.config import config
 
 from phylojax.transforms import SigmoidTransform
