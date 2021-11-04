@@ -113,6 +113,7 @@ def fluA_unrooted(args):
             indices.append((node.index, children[0].index, children[1].index))
     indices = tuple(indices)
     branch_lengths = np.array([[float(x) for x in nodes]]) * 0.001
+    branch_lengths = jax.lax.clamp(1.0e-6, branch_lengths, np.inf)
     bls = np.expand_dims(branch_lengths, axis=-1)
     partials, weights = get_dna_leaves_partials_compressed(dna)
     jc69_model = JC69()
@@ -120,27 +121,34 @@ def fluA_unrooted(args):
     proportions = np.array([[[1.0]]])
     tip_partials = np.array(partials[: len(tree.taxon_namespace)])
 
-    print("  JIT off")
-
     def fn(bls):
         mats = jc69_model.p_t(bls)
         return treelikelihood.calculate_treelikelihood(
             tip_partials, weights, indices, mats, jc69_model.frequencies, proportions
         )[0]
 
-    t = test(fn, grad(fn), bls, replicates)
+    if args.all:
+        print("  JIT off")
 
-    if args.output:
-        args.output.write(f"treelikelihood,evaluation,off,{t[0]}\n")
-        args.output.write(f"treelikelihood,gradient,off,{t[1]}\n")
+        t, log_p, grad_log_p = test(fn, grad(fn), bls, replicates, args.separate)
+
+        if args.output:
+            args.output.write(
+                f"treelikelihood,evaluation,off,{t[0]},{log_p.squeeze().tolist()}\n"
+            )
+            args.output.write(f"treelikelihood,gradient,off,{t[1]},\n")
 
     print("  JIT on jit(grad(fn))")
     calculate_treelikelihood_jit = jit(fn)
-    t = test(calculate_treelikelihood_jit, jit(grad(fn)), bls, replicates)
+    t, log_p, grad_log_p = test(
+        calculate_treelikelihood_jit, jit(grad(fn)), bls, replicates, args.separate
+    )
 
     if args.output:
-        args.output.write(f"treelikelihood,evaluation,on,{t[0]}\n")
-        args.output.write(f"treelikelihood,gradient,on,{t[1]}\n")
+        args.output.write(
+            f"treelikelihood,evaluation,on,{t[0]},{log_p.squeeze().tolist()}\n"
+        )
+        args.output.write(f"treelikelihood,gradient,on,{t[1]},\n")
 
     if args.all:
         print("  JIT on grad(jit(fn))")
@@ -149,23 +157,24 @@ def fluA_unrooted(args):
             grad(calculate_treelikelihood_jit),
             bls,
             replicates,
+            args.separate,
         )
 
         print("  v2 JIT off")
 
         def fnv2(bls):
             mats = jc69_model.p_t(bls)
-            return treelikelihood.calculate_treelikelihoodv2(
+            return calculate_treelikelihoodv2(
                 partials, weights, indices, mats, jc69_model.frequencies, proportions
             )[0]
 
-        test(fnv2, grad(fnv2), bls, replicates)
+        test(fnv2, grad(fnv2), bls, replicates, args.separate)
 
         print("  v3 JIT off")
 
         def fnv3(bls):
             mats = jc69_model.p_t(bls)
-            return treelikelihood.calculate_treelikelihoodv3(
+            return calculate_treelikelihoodv3(
                 tip_partials,
                 weights,
                 indices,
@@ -174,11 +183,11 @@ def fluA_unrooted(args):
                 proportions,
             )[0]
 
-        test(fnv3, grad(fnv3), bls, replicates)
+        test(fnv3, grad(fnv3), bls, replicates, args.separate)
 
         print("  v3 JIT on grad(jit(fn))")
         fnv3_jit = jit(fnv3)
-        test(fnv3_jit, grad(fnv3_jit), bls, replicates)
+        test(fnv3_jit, grad(fnv3_jit), bls, replicates, args.separate)
 
 
 def test(fn, g, bls, replicates, separate=False):
@@ -197,7 +206,7 @@ def test(fn, g, bls, replicates, separate=False):
     end = timer()
     t1 = end - start
     times.append(t1)
-    print(f"  {replicates} evaluations: {t1} ({log_p})")
+    print(f"  {replicates} evaluations: {t1} ({log_p.squeeze().tolist()})")
 
     if separate:
         start = timer()
@@ -208,12 +217,16 @@ def test(fn, g, bls, replicates, separate=False):
 
     start = timer()
     for _ in range(replicates):
-        _ = g(bls)
+        grad_log_p = g(bls)
     end = timer()
     t3 = end - start
     times.append(t3)
     print(f"  {replicates} gradient evaluations: {t3})")
-    return times
+
+    if separate:
+        times.append(t0)
+        times.append(t2)
+    return times, log_p, grad_log_p
 
 
 def ratio_transform_jacobian(args):
@@ -255,10 +268,15 @@ def ratio_transform_jacobian(args):
         log_det_jac = fn(ratios_root_height)
 
     end = timer()
-    print(f"  {replicates} evaluations: {end - start} ({log_det_jac})")
+    print(
+        f"  {replicates} evaluations: {end - start} ({log_det_jac.squeeze().tolist()})"
+    )
 
     if args.output:
-        args.output.write(f"ratio_transform_jacobian,evaluation,off,{end - start}\n")
+        args.output.write(
+            f"ratio_transform_jacobian,evaluation,off,{end - start},"
+            f"{log_det_jac.squeeze().tolist()}\n"
+        )
 
     start = timer()
     y, vjp_fn = vjp(fn, ratios_root_height)
@@ -268,7 +286,7 @@ def ratio_transform_jacobian(args):
     print(f"  {replicates} gradient evaluations: {end - start}")
 
     if args.output:
-        args.output.write(f"ratio_transform_jacobian,gradient,off,{end - start}\n")
+        args.output.write(f"ratio_transform_jacobian,gradient,off,{end - start},\n")
 
     if args.debug:
         print(log_det_jac_gradient)
@@ -279,10 +297,13 @@ def ratio_transform_jacobian(args):
     for _ in range(replicates):
         log_det_jac = fn_jit(ratios_root_height)
     end = timer()
-    print(f"  {replicates} evaluations: {end - start} ({log_det_jac})")
+    print(f"  {replicates} evaluations: {end - start} ({log_det_jac.tolist()})")
 
     if args.output:
-        args.output.write(f"ratio_transform_jacobian,evaluation,on,{end - start}\n")
+        args.output.write(
+            f"ratio_transform_jacobian,evaluation,on,{end - start},"
+            f"{log_det_jac.squeeze().tolist()}\n"
+        )
 
     start = timer()
     y, vjp_fn = vjp(fn, ratios_root_height)
@@ -294,7 +315,7 @@ def ratio_transform_jacobian(args):
     print(f"  {replicates} gradient evaluations: {end - start}")
 
     if args.output:
-        args.output.write(f"ratio_transform_jacobian,gradient,on,{end - start}\n")
+        args.output.write(f"ratio_transform_jacobian,gradient,on,{end - start},\n")
 
 
 def ratio_transform(args, separate=False):
@@ -378,10 +399,12 @@ def constant_coalescent(args, separate=False):
         log_p = log_prob(node_heights, theta)
     end = timer()
     t1 = end - start
-    print(f"  {replicates} evaluations: {t1} ({log_p})")
+    print(f"  {replicates} evaluations: {t1} ({log_p.squeeze().tolist()})")
 
     if args.output:
-        args.output.write(f"coalescent,evaluation,off,{end - start}\n")
+        args.output.write(
+            f"coalescent,evaluation,off,{end - start},{log_p.squeeze().tolist()}\n"
+        )
 
     start = timer()
     y, vjp_fn = vjp(log_prob, node_heights, theta)
@@ -392,7 +415,7 @@ def constant_coalescent(args, separate=False):
     print(f"  {replicates} gradient evaluations: {end - start}")
 
     if args.output:
-        args.output.write(f"coalescent,gradient,off,{end - start}\n")
+        args.output.write(f"coalescent,gradient,off,{end - start},\n")
 
     print("  JIT on")
 
@@ -408,10 +431,12 @@ def constant_coalescent(args, separate=False):
     for _ in range(replicates):
         log_prob_jit(node_heights, theta)
     end = timer()
-    print(f"  {replicates} evaluations: {end - start} ({log_p})")
+    print(f"  {replicates} evaluations: {end - start} ({log_p.squeeze().tolist()})")
 
     if args.output:
-        args.output.write(f"coalescent,evaluation,on,{end - start}\n")
+        args.output.write(
+            f"coalescent,evaluation,on,{end - start},{log_p.squeeze().tolist()}\n"
+        )
 
     fn_jit_grad = jit(vjp_fn)
     start = timer()
@@ -421,7 +446,7 @@ def constant_coalescent(args, separate=False):
     print(f"  {replicates} gradient evaluations: {end - start}")
 
     if args.output:
-        args.output.write(f"coalescent,gradient,on,{end - start}\n")
+        args.output.write(f"coalescent,gradient,on,{end - start},\n")
 
     if args.all:
         x, counts = np.unique(bounds[:taxa_count], return_counts=True)
@@ -458,6 +483,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("-i", "--input", required=True, help="""alignment file""")
 parser.add_argument("-t", "--tree", required=True, help="""tree file""")
 parser.add_argument(
+    "-r",
     "--replicates",
     required=True,
     type=int,
@@ -471,14 +497,24 @@ parser.add_argument(
     help="""csv output file""",
 )
 parser.add_argument(
+    "-s",
+    "--scaler",
+    type=float,
+    default=1.0,
+    help="""scale branch lengths""",
+)
+parser.add_argument(
     "--debug", required=False, action="store_true", help="""Debug mode"""
 )
 parser.add_argument("--all", required=False, action="store_true", help="""Run all""")
+parser.add_argument(
+    "--separate", required=False, action="store_true", help="""Separate first call"""
+)
 
 args = parser.parse_args()
 
 if args.output:
-    args.output.write("function,mode,JIT,time\n")
+    args.output.write("function,mode,JIT,time,logprob\n")
 
 print("Tree likelihood unrooted:")
 fluA_unrooted(args)
@@ -486,8 +522,9 @@ fluA_unrooted(args)
 print("Height transform log det Jacobian:")
 ratio_transform_jacobian(args)
 
-print("Node height transform:")
-ratio_transform(args)
+if args.all:
+    print("Node height transform:")
+    ratio_transform(args)
 
 print("Constant coalescent:")
 constant_coalescent(args)
