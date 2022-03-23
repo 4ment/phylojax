@@ -98,7 +98,12 @@ def fluA_unrooted(args):
     def fn(bls):
         mats = jc69_model.p_t(bls)
         return treelikelihood.calculate_treelikelihood(
-            tip_partials, weights, indices, mats, jc69_model.frequencies, proportions
+            tip_partials,
+            weights,
+            indices,
+            np.expand_dims(mats, -3),
+            jc69_model.frequencies,
+            proportions,
         )[0]
 
     if True or args.all:
@@ -114,7 +119,8 @@ def fluA_unrooted(args):
 
             if len(t) > 2:
                 args.output.write(
-                    f"treelikelihood,evaluation1,off,{t[2]},{log_p.squeeze().tolist()}\n"
+                    f"treelikelihood,evaluation1,off,{t[2]},"
+                    f"{log_p.squeeze().tolist()}\n"
                 )
                 args.output.write(f"treelikelihood,gradient1,off,{t[3]},\n")
 
@@ -256,7 +262,8 @@ def ratio_transform_jacobian(args):
         print(f"  First evaluation: {end-start} ({log_det_jac})")
         if args.output:
             args.output.write(
-                f"ratio_transform_jacobian,evaluation1,off,{end - start},{log_det_jac.squeeze().tolist()}\n"
+                f"ratio_transform_jacobian,evaluation1,off,"
+                f"{end - start},{log_det_jac.squeeze().tolist()}\n"
             )
 
     start = timer()
@@ -305,7 +312,8 @@ def ratio_transform_jacobian(args):
         print(f"  First evaluation: {end-start} ({log_det_jac})")
         if args.output:
             args.output.write(
-                f"ratio_transform_jacobian,evaluation1,on,{end - start},{log_det_jac.squeeze().tolist()}\n"
+                f"ratio_transform_jacobian,evaluation1,on,"
+                f"{end - start},{log_det_jac.squeeze().tolist()}\n"
             )
 
     start = timer()
@@ -365,7 +373,7 @@ def ratio_transform(args):
 
     print("  JIT off")
 
-    if separate:
+    if args.separate:
         start = timer()
         transform_ratios(ratios_root_height, bounds, indices_for_ratios)
         end = timer()
@@ -380,7 +388,7 @@ def ratio_transform(args):
     print("  JIT on")
     transform_ratios_jit = jit(transform_ratios)
 
-    if separate:
+    if args.separate:
         start = timer()
         transform_ratios_jit(ratios_root_height, bounds, indices_for_ratios)
         end = timer()

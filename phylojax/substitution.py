@@ -19,7 +19,7 @@ class SubstitutionModel(ABC):
 
     @staticmethod
     def norm(Q, frequencies):
-        return -np.sum(np.diagonal(Q) * frequencies)
+        return -np.sum(np.diagonal(Q, axis1=-2, axis2=-1) * frequencies, -1)
 
 
 class JC69(SubstitutionModel):
@@ -27,7 +27,7 @@ class JC69(SubstitutionModel):
         super().__init__(np.array([0.25] * 4))
 
     def p_t(self, d):
-        d = np.expand_dims(d, axis=-1)
+        # d = np.expand_dims(d, axis=-1)
         a = 0.25 + 3 / 4 * np.exp(-4 / 3 * d)
         b = 0.25 - 0.25 * np.exp(-4 / 3 * d)
         return np.concatenate(
@@ -45,28 +45,33 @@ class JC69(SubstitutionModel):
         )
 
 
+def diag_last_dim(x):
+    return np.expand_dims(x, -1) * np.eye(x.shape[-1])
+
+
 class SymmetricSubstitutionModel(SubstitutionModel, ABC):
     def __init__(self, frequencies):
         super().__init__(frequencies)
 
     def p_t(self, branch_lengths):
         Q = self.q()
-        Q /= SubstitutionModel.norm(Q, self.frequencies)
-        sqrt_pi = np.diag(np.sqrt(self.frequencies))
-        sqrt_pi_inv = np.diag(1.0 / np.sqrt(self.frequencies))
+        Q /= np.expand_dims(
+            np.expand_dims(SubstitutionModel.norm(Q, self.frequencies), -1), -1
+        )
+        sqrt_pi = diag_last_dim(np.sqrt(self.frequencies))
+        sqrt_pi_inv = diag_last_dim(1.0 / np.sqrt(self.frequencies))
         S = sqrt_pi @ Q @ sqrt_pi_inv
         e, v = self.eigen(S)
+        offset = branch_lengths.ndim - e.ndim
         return (
-            sqrt_pi_inv
-            @ v
-            @ (
-                np.expand_dims(
-                    np.exp(e * np.expand_dims(branch_lengths, axis=1)), axis=1
+            np.expand_dims(sqrt_pi_inv @ v, -3)
+            @ diag_last_dim(
+                np.exp(
+                    e.reshape(e.shape[:-1] + (1,) * offset + e.shape[-1:])
+                    * branch_lengths
                 )
-                * np.eye(e.shape[0])
             )
-            @ LA.inv(v)
-            @ sqrt_pi
+            @ np.expand_dims(LA.inv(v) @ sqrt_pi, -3)
         )
 
     def eigen(self, Q):
@@ -79,9 +84,9 @@ class GTR(SymmetricSubstitutionModel):
         self.rates = rates
 
     def q(self):
-        rates = self.rates
-        pi = self.frequencies
-        return np.hstack(
+        rates = np.expand_dims(self.rates, -2)
+        pi = np.expand_dims(self.frequencies, -2)
+        return np.concatenate(
             (
                 -(
                     rates[..., 0] * pi[..., 1]
@@ -115,7 +120,8 @@ class GTR(SymmetricSubstitutionModel):
                     + rates[..., 4] * pi[..., 1]
                     + rates[..., 5] * pi[..., 2]
                 ),
-            )
+            ),
+            -1,
         ).reshape(self.rates.shape[:-1] + (4, 4))
 
 

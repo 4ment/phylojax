@@ -10,13 +10,13 @@ import jax.scipy.optimize
 from jax import grad, jit
 from jax.config import config
 
-from phylojax.transforms import SigmoidTransform
+from phylojax.transforms import SigmoidTransform, StickBreakingTransform
 
 from .coalescent import ConstantCoalescent
 from .io import read_tree_and_alignment
-from .prior import ctmc_scale
+from .prior import ctmc_scale, dirichlet_logpdf
 from .sitepattern import get_dna_leaves_partials_compressed
-from .substitution import JC69
+from .substitution import GTR, JC69
 from .tree import NodeHeightTransform, heights_to_branch_lengths, transform_ratios
 from .treelikelihood import calculate_treelikelihood
 
@@ -30,6 +30,13 @@ def create_parser():
     parser.add_argument("-t", "--tree", required=True, help="""Tree file""")
     parser.add_argument("-i", "--input", required=False, help="""Sequence file""")
     parser.add_argument(
+        "-m",
+        "--model",
+        choices=["JC69", "GTR"],
+        default="JC69",
+        help="""Substitution model [default: %(default)s]""",
+    )
+    parser.add_argument(
         "-a",
         "--algorithm",
         choices=["advi", "map"],
@@ -41,37 +48,31 @@ def create_parser():
         "--iter",
         type=int,
         default=100000,
-        required=False,
         help="""Number of iterations""",
     )
     parser.add_argument("--nojit", action="store_true", help="""Disable JIT""")
-    parser.add_argument(
-        "--seed", type=int, required=False, default=None, help="""Initialize seed"""
-    )
+    parser.add_argument("--seed", type=int, default=None, help="""Initialize seed""")
     parser.add_argument(
         "-e",
         "--eta",
-        required=False,
         type=float,
         default=0.1,
         help="""Learning rate for variational inference""",
     )
     parser.add_argument(
         "--elbo_samples",
-        required=False,
         type=int,
         default=100,
         help="""Number of samples for Monte Carlo estimate of ELBO""",
     )
     parser.add_argument(
         "--grad_samples",
-        required=False,
         type=int,
         default=1,
         help="""Number of samples for Monte Carlo estimate of gradients""",
     )
     parser.add_argument(
-        "--verbose", type=bool, required=False, help="""Output intermediate results"""
+        "--verbose", action="store_true", help="""Output intermediate results"""
     )
     return parser
 
@@ -100,6 +101,8 @@ def neg_joint_likelihood(
     ratios_root_height = np.concatenate((x_ratios, x_root), axis=-1)
     node_heights = transform_ratios(ratios_root_height, bounds, indices_for_ratios)
 
+    model = JC69()
+
     return -joint_likelihood(
         partials,
         weights,
@@ -109,6 +112,7 @@ def neg_joint_likelihood(
         node_heights,
         x_clock,
         x_theta,
+        model,
     ).sum()
 
 
@@ -121,6 +125,7 @@ def joint_likelihood(
     internal_heights,
     clock,
     theta,
+    model,
 ):
 
     taxa_count = internal_heights.shape[-1] + 1
@@ -129,7 +134,7 @@ def joint_likelihood(
     branch_lengths = heights_to_branch_lengths(internal_heights, bounds, pre_indexing)
 
     bls = branch_lengths * clock
-    mats = JC69().p_t(np.expand_dims(bls, -1))
+    mats = model.p_t(np.expand_dims(bls, -1))
     frequencies = np.broadcast_to(JC69().frequencies, bls.shape[:-1] + (4,))
 
     coalescent = ConstantCoalescent(theta)
@@ -149,11 +154,75 @@ def joint_likelihood(
         partials,
         weights,
         post_indexing,
-        mats,
-        np.expand_dims(frequencies, axis=-2),
+        np.expand_dims(mats, -3),
+        np.expand_dims(frequencies, axis=-3),
         np.array([[[1.0]]]),
     )
     return log_p + log_prior
+
+
+def elbo_fn_aux(
+    params,
+    partials,
+    weights,
+    pre_indexing,
+    post_indexing,
+    indices_for_ratios,
+    indices_for_jac,
+    bounds,
+    etas,
+    root_offset,
+    model,
+):
+    taxa_count = int((bounds.shape[0] + 1) / 2)
+    param_count = taxa_count + 1
+    z = jax.vmap(lambda a, b, c: a + np.exp(b) * c, (0, 0, 1), out_axes=1)(
+        params[..., :param_count, 0],
+        params[..., :param_count, 1],
+        etas[..., :param_count],
+    )
+
+    sigmoid_transform = SigmoidTransform()
+    height_transform = NodeHeightTransform(bounds, indices_for_ratios, indices_for_jac)
+
+    z_root = z[..., 0:1]
+    z_ratios = z[..., 1 : (taxa_count - 1)]
+    z_clock = z[..., (taxa_count - 1) : taxa_count]
+    z_theta = z[..., taxa_count:]
+
+    x_root = np.exp(z_root) + root_offset
+    x_ratios = sigmoid_transform(z_ratios)
+    x_clock = np.exp(z_clock)
+    x_theta = np.exp(z_theta)
+
+    ratios_root_height = np.concatenate((x_ratios, x_root), axis=-1)
+    internal_heights = height_transform(ratios_root_height)
+
+    joint_p = joint_likelihood(
+        partials,
+        weights,
+        pre_indexing,
+        post_indexing,
+        bounds,
+        internal_heights,
+        x_clock,
+        x_theta,
+        model,
+    )
+
+    entropy = (0.5 + 0.5 * np.log(2 * np.pi) + params[..., :param_count, 1]).sum()
+
+    log_det_jacobians = (
+        height_transform.log_abs_det_jacobian(ratios_root_height, internal_heights)
+        + sigmoid_transform.log_abs_det_jacobian(z_ratios, x_ratios).sum(
+            axis=-1, keepdims=True
+        )
+        + z_root
+        + z_clock
+        + z_theta
+    )
+
+    return joint_p, log_det_jacobians, entropy
 
 
 def elbo_fn(
@@ -168,42 +237,70 @@ def elbo_fn(
     etas,
     root_offset,
 ):
-    z = jax.vmap(lambda a, b, c: a + np.exp(b) * c, (0, 0, 1), out_axes=1)(
-        params[..., 0], params[..., 1], etas
-    )
-
-    sigmoid_transform = SigmoidTransform()
-    height_transform = NodeHeightTransform(bounds, indices_for_ratios, indices_for_jac)
-
-    x = np.exp(z[..., :3])
-    x_root = x[..., 0:1] + root_offset
-    x_ratios = sigmoid_transform(z[..., 3:])
-    x_clock = x[..., 1:2]
-    x_theta = x[..., 2:3]
-
-    ratios_root_height = np.concatenate((x_ratios, x_root), axis=-1)
-    internal_heights = height_transform(ratios_root_height)
-
-    joint_p = joint_likelihood(
+    joint_p, log_det_jacobians, entropy = elbo_fn_aux(
+        params,
         partials,
         weights,
         pre_indexing,
         post_indexing,
+        indices_for_ratios,
+        indices_for_jac,
         bounds,
-        internal_heights,
-        x_clock,
-        x_theta,
+        etas,
+        root_offset,
+        JC69(),
     )
 
-    entropy = (0.5 + 0.5 * np.log(2 * np.pi) + params[..., 1]).sum()
+    return -(np.mean(joint_p + log_det_jacobians) + entropy)
 
-    log_det_jacobians = (
-        height_transform.log_abs_det_jacobian(ratios_root_height, internal_heights)
-        + z[..., :3].sum(axis=-1, keepdims=True)
-        + sigmoid_transform.log_abs_det_jacobian(z[..., 3:], x[..., 3:]).sum(
-            axis=-1, keepdims=True
-        )
+
+def elbo_fn_gtr(
+    params,
+    partials,
+    weights,
+    pre_indexing,
+    post_indexing,
+    indices_for_ratios,
+    indices_for_jac,
+    bounds,
+    etas,
+    root_offset,
+):
+    taxa_count = int((bounds.shape[0] + 1) / 2)
+    offset = taxa_count + 1  # n-1 heights, 1 clock, 1 theta
+    z = jax.vmap(lambda a, b, c: a + np.exp(b) * c, (0, 0, 1), out_axes=1)(
+        params[..., offset:, 0], params[..., offset:, 1], etas[..., offset:]
     )
+
+    z_rates = z[..., :5]
+    z_freqs = z[..., 5:8]
+
+    stick_transform = StickBreakingTransform()
+    x_rates = stick_transform(z_rates)
+    x_freqs = stick_transform(z_freqs)
+
+    joint_p, log_det_jacobians, entropy = elbo_fn_aux(
+        params,
+        partials,
+        weights,
+        pre_indexing,
+        post_indexing,
+        indices_for_ratios,
+        indices_for_jac,
+        bounds,
+        etas,
+        root_offset,
+        GTR(x_rates, x_freqs),
+    )
+
+    joint_p += np.expand_dims(
+        dirichlet_logpdf(x_rates, np.ones(6)), -1
+    ) + np.expand_dims(dirichlet_logpdf(x_freqs, np.ones(4)), -1)
+
+    log_det_jacobians += +np.expand_dims(
+        stick_transform.log_abs_det_jacobian(z_rates, x_rates), -1
+    ) + np.expand_dims(stick_transform.log_abs_det_jacobian(z_freqs, x_freqs), -1)
+    entropy += (0.5 + 0.5 * np.log(2 * np.pi) + params[..., offset:, 1]).sum()
     return -(np.mean(joint_p + log_det_jacobians) + entropy)
 
 
@@ -239,17 +336,26 @@ def loss(params, size, rng, fn, **kwargs):
 
 def advi_rooted(x, arg, **kwargs):
     rng = jax.random.PRNGKey(arg.seed)
+    taxa_count = kwargs['taxa_count']
 
     opt_init, opt_update, get_params = jax.experimental.optimizers.adam(arg.eta)
     opt_state = opt_init(x)
 
     if arg.nojit:
-        grad_fn = grad(elbo_fn, 0)
-        fn = elbo_fn
+        if arg.model == 'JC69':
+            grad_fn = grad(elbo_fn, 0)
+            fn = elbo_fn
+        else:
+            grad_fn = grad(elbo_fn_gtr, 0)
+            fn = elbo_fn_gtr
         update = opt_update
     else:
-        grad_fn = jax.jit(grad(elbo_fn, 0))
-        fn = jax.jit(elbo_fn)
+        if arg.model == 'JC69':
+            grad_fn = jax.jit(grad(elbo_fn, 0))
+            fn = jax.jit(elbo_fn)
+        else:
+            grad_fn = jax.jit(grad(elbo_fn_gtr, 0))
+            fn = jax.jit(elbo_fn_gtr)
         update = jit(opt_update)
 
     if arg.elbo_samples > 0:
@@ -272,8 +378,16 @@ def advi_rooted(x, arg, **kwargs):
                     np.exp(x[0, 0] + np.exp(x[0, 1]) * np.exp(x[0, 1].item() / 2))
                     + root_offset
                 )
-                mean_clock = np.exp(x[1, 0] + np.exp(x[1, 1]) * np.exp(x[1, 1]) / 2)
-                mean_theta = np.exp(x[2, 0] + np.exp(x[2, 1]) * np.exp(x[2, 1]) / 2)
+                mean_clock = np.exp(
+                    x[(taxa_count - 1), 0]
+                    + np.exp(x[(taxa_count - 1), 1])
+                    * np.exp(x[(taxa_count - 1), 1])
+                    / 2
+                )
+                mean_theta = np.exp(
+                    x[taxa_count, 0]
+                    + np.exp(x[taxa_count, 1]) * np.exp(x[taxa_count, 1]) / 2
+                )
                 print(
                     "root {} mode {} mu {} sigma {}".format(
                         mean_root,
@@ -283,13 +397,19 @@ def advi_rooted(x, arg, **kwargs):
                     )
                 )
                 print(
-                    "theta {} mode {} mu {} sigma {}".format(
-                        mean_theta, np.exp(x[1, 0]), x[1, 0], np.exp(x[1, 1])
+                    "clock {} mode {} mu {} sigma {}".format(
+                        mean_clock,
+                        np.exp(x[(taxa_count - 1), 0]),
+                        x[(taxa_count - 1), 0],
+                        np.exp(x[(taxa_count - 1), 1]),
                     )
                 )
                 print(
-                    "clock {} mode {} mu {} sigma {}".format(
-                        mean_clock, np.exp(x[2, 0]), x[2, 0], np.exp(x[2, 1])
+                    "theta {} mode {} mu {} sigma {}".format(
+                        mean_theta,
+                        np.exp(x[taxa_count, 0]),
+                        x[taxa_count, 0],
+                        np.exp(x[taxa_count, 1]),
                     )
                 )
 
@@ -396,6 +516,7 @@ def run(arg):
             post_indexing=post_indexing,
             partials=partials,
             weights=weights,
+            taxa_count=taxa_count,
         )
     else:
         taxa_count = sampling_times.shape[0]
@@ -409,24 +530,44 @@ def run(arg):
         theta_mu = np.array([3.0])
         theta_sigma = np.array([-2.0])
 
-        param_count = (taxa_count - 1) + 1 + 1
-        x = (
-            np.concatenate(
+        mus = np.concatenate(
+            (
+                root_mu,
+                ratios_mu,
+                clock_mu,
+                theta_mu,
+            ),
+            0,
+        )
+        sigmas = np.concatenate(
+            (
+                root_sigma,
+                ratios_sigma,
+                clock_sigma,
+                theta_sigma,
+            ),
+            0,
+        )
+
+        if arg.model == "GTR":
+            mus = np.concatenate(
                 (
-                    root_mu,
-                    clock_mu,
-                    theta_mu,
-                    ratios_mu,
-                    root_sigma,
-                    clock_sigma,
-                    theta_sigma,
-                    ratios_sigma,
+                    mus,
+                    np.zeros(5),
+                    np.zeros(3),
                 ),
                 0,
             )
-            .reshape((2, param_count))
-            .transpose()
-        )
+            sigmas = np.concatenate(
+                (
+                    sigmas,
+                    np.full([5], -5.0),
+                    np.full([3], -5.0),
+                ),
+                0,
+            )
+        x = np.vstack((mus, sigmas)).transpose()
+
         advi_rooted(
             x,
             arg,
@@ -437,6 +578,7 @@ def run(arg):
             post_indexing=post_indexing,
             partials=partials,
             weights=weights,
+            taxa_count=taxa_count,
         )
 
 

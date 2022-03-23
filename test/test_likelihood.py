@@ -33,7 +33,7 @@ def test_calculate_unrooted(hello_tree_file, hello_fasta_file, jc69_model):
             tip_partials,
             weights,
             indices,
-            mats,
+            np.expand_dims(mats, -3),
             np.expand_dims(frequencies, axis=-2),
             np.array([[[1.0]]]),
         )
@@ -53,7 +53,7 @@ def test_calculate_unrooted(hello_tree_file, hello_fasta_file, jc69_model):
         tip_partials,
         weights,
         indices,
-        mats,
+        np.expand_dims(mats, -3),
         np.expand_dims(frequencies, axis=-2),
         np.array([[[1.0]]]),
     )
@@ -84,7 +84,7 @@ def test_calculate_likelihood_rooted(flu_a_tree_file, flu_a_fasta_file, jc69_mod
         tip_partials,
         weights,
         indices,
-        mats,
+        np.expand_dims(mats, -3),
         np.expand_dims(frequencies, axis=-2),
         np.array([[[1.0]]]),
     )
