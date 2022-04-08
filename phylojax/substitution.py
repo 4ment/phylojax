@@ -5,10 +5,6 @@ import jax.numpy.linalg as LA
 
 
 class SubstitutionModel(ABC):
-    def __init__(self, frequencies, rates=None):
-        self.frequencies = frequencies
-        self.rates = rates
-
     @abstractmethod
     def p_t(self, branch_lengths):
         pass
@@ -17,19 +13,30 @@ class SubstitutionModel(ABC):
     def q(self):
         pass
 
+    def dp_dt(self, d):
+        return self.q() @ self.p_t(d)
+
     @staticmethod
     def norm(Q, frequencies):
         return -np.sum(np.diagonal(Q, axis1=-2, axis2=-1) * frequencies, -1)
 
 
 class JC69(SubstitutionModel):
-    def __init__(self):
-        super().__init__(np.array([0.25] * 4))
+    @property
+    def frequencies(self):
+        return np.array([0.25] * 4)
 
     def p_t(self, d):
-        # d = np.expand_dims(d, axis=-1)
         a = 0.25 + 3 / 4 * np.exp(-4 / 3 * d)
         b = 0.25 - 0.25 * np.exp(-4 / 3 * d)
+        return np.concatenate(
+            [a, b, b, b, b, a, b, b, b, b, a, b, b, b, b, a], axis=-1
+        ).reshape(d.shape[:-1] + (4, 4))
+
+    def dp_dt(self, d):
+        temp = np.exp(-4 / 3 * d)
+        a = -temp
+        b = temp / 3.0
         return np.concatenate(
             [a, b, b, b, b, a, b, b, b, b, a, b, b, b, b, a], axis=-1
         ).reshape(d.shape[:-1] + (4, 4))
@@ -50,8 +57,9 @@ def diag_last_dim(x):
 
 
 class SymmetricSubstitutionModel(SubstitutionModel, ABC):
-    def __init__(self, frequencies):
-        super().__init__(frequencies)
+    def __init__(self, rates, frequencies):
+        self.rates = rates
+        self.frequencies = frequencies
 
     def p_t(self, branch_lengths):
         Q = self.q()
@@ -79,10 +87,6 @@ class SymmetricSubstitutionModel(SubstitutionModel, ABC):
 
 
 class GTR(SymmetricSubstitutionModel):
-    def __init__(self, rates, frequencies):
-        super().__init__(frequencies)
-        self.rates = rates
-
     def q(self):
         rates = np.expand_dims(self.rates, -2)
         pi = np.expand_dims(self.frequencies, -2)
@@ -127,7 +131,7 @@ class GTR(SymmetricSubstitutionModel):
 
 class HKY(SymmetricSubstitutionModel):
     def __init__(self, kappa, frequencies):
-        super().__init__(frequencies)
+        super().__init__(kappa, frequencies)
         self.kappa = kappa
 
     def q(self):

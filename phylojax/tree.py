@@ -2,6 +2,29 @@ import jax.numpy as np
 import jax.ops
 
 
+def postorder_indices(tree):
+    indices = []
+    for node in tree.postorder_node_iter():
+        if not node.is_leaf():
+            children = node.child_nodes()
+            indices.append((node.index, children[0].index, children[1].index))
+    return indices
+
+
+def preorder_indices(tree):
+    indices = []
+    children = tree.seed_node.child_nodes()
+    indices.append((children[0].index, children[1].index, tree.seed_node.index))
+    indices.append((children[1].index, children[0].index, tree.seed_node.index))
+    for node in tree.preorder_node_iter(
+        lambda n: n.index not in (children[0].index, children[1].index)
+    ):
+        if node != tree.seed_node:
+            sibling = node.sibling_nodes()[0]
+            indices.append((node.index, sibling.index, node.parent_node.index))
+    return indices
+
+
 def distance_to_ratios(tree, eps=1.0e-6):
     taxa_count = len(tree.taxon_namespace)
     bounds = [None] * (2 * taxa_count - 1)

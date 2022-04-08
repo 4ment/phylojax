@@ -7,7 +7,7 @@ from jax.ops import index, index_update
 from .tree import heights_to_branch_lengths, transform_ratios
 
 
-def calculate_treelikelihood(tip_partials, weights, indices, mats, freqs, props):
+def calculate_partials(tip_partials, indices, mats, props):
     partials = np.concatenate(
         (
             np.broadcast_to(
@@ -27,8 +27,8 @@ def calculate_treelikelihood(tip_partials, weights, indices, mats, freqs, props)
         axis=0,
     )
 
-    def fn(post_indexing, i, partials):
-        node, left, right = np.array(post_indexing)[i]
+    def fn(i, partials):
+        node, left, right = np.array(indices)[i]
         return index_update(
             partials,
             index[node],
@@ -36,9 +36,98 @@ def calculate_treelikelihood(tip_partials, weights, indices, mats, freqs, props)
             * (mats[..., right, :, :, :] @ partials[right]),
         )
 
-    fn2 = partial(fn, indices)
-    partials = jax.lax.fori_loop(0, len(indices), fn2, partials)
+    return jax.lax.fori_loop(0, len(indices), fn, partials)
 
+
+def calculate_upper_partials(partials, indices, mats):
+    uppers = np.empty((partials.shape[0] - 1,) + partials.shape[1:])
+    node, sibling, _ = indices[0]
+    uppers = index_update(
+        uppers,
+        index[node],
+        mats[..., sibling, :, :, :] @ partials[sibling],
+    )
+    node, sibling, _ = indices[1]
+    uppers = index_update(
+        uppers,
+        index[node],
+        mats[..., sibling, :, :, :] @ partials[sibling],
+    )
+
+    def fn(i, uppers):
+        node, sibling, parent = np.array(indices)[i]
+        return index_update(
+            uppers,
+            index[node],
+            (mats[..., sibling, :, :, :] @ partials[sibling])
+            * (mats[..., parent, :, :, :] @ uppers[parent]),
+        )
+
+    return jax.lax.fori_loop(2, len(indices), fn, uppers)
+
+
+def calculate_treelikelihood_upper(partials, uppers, weights, mat, freqs, props):
+    return np.sum(
+        np.log(freqs @ np.sum(props * (mat @ partials) * uppers, -3)) * weights,
+        axis=-1,
+    )
+
+
+def calculate_treelikelihood_gradient(
+    likelihoods, partials, uppers, weights, dmats, freqs, props
+):
+    return np.sum(
+        (
+            freqs
+            @ np.sum(props * (np.swapaxes(dmats, 0, 1) @ partials[:-1]) * uppers, -3)
+        )
+        / likelihoods
+        * weights,
+        axis=-1,
+    )
+
+
+@partial(jax.custom_jvp, nondiff_argnums=(1, 2, 3, 4, 5))
+def calculate_treelikelihood_custom(
+    branch_lengths, tip_partials, weights, indices, subst_model, props
+):
+    frequencies = np.expand_dims(subst_model.frequencies, axis=-2)
+    mats = subst_model.p_t(np.expand_dims(branch_lengths, axis=-1))
+    mats = np.expand_dims(mats, -3)
+    partials = calculate_partials(tip_partials, indices[0], mats, props)
+    return np.sum(
+        np.log(frequencies @ np.sum(props * partials[indices[0][-1][0]], -3)) * weights,
+        axis=-1,
+    )
+
+
+@calculate_treelikelihood_custom.defjvp
+def calculate_treelikelihood_custom_jvp(
+    tip_partials, weights, indices, subst_model, props, primals, tangents
+):
+    (branch_lengths,) = primals
+    (branch_lengths_dot,) = tangents
+    branch_lengths = np.expand_dims(branch_lengths, axis=-1)
+    mats = subst_model.p_t(branch_lengths)
+    mats = np.expand_dims(mats, -3)
+    partials = calculate_partials(tip_partials, indices[0], mats, props)
+    frequencies = np.expand_dims(subst_model.frequencies, axis=-2)
+    log_p = np.sum(
+        np.log(frequencies @ np.sum(props * partials[indices[0][-1][0]], -3)) * weights,
+        axis=-1,
+    )
+    likelihoods = frequencies @ np.sum(partials[-1], -3)
+    dmats = subst_model.dp_dt(branch_lengths)
+    dmats = np.expand_dims(dmats, -3)
+    uppers = calculate_upper_partials(partials, indices[1], mats)
+    gradient = calculate_treelikelihood_gradient(
+        likelihoods, partials, uppers, weights, dmats, frequencies, props
+    )
+    return log_p.squeeze(), np.dot(gradient.squeeze(), branch_lengths_dot.squeeze())
+
+
+def calculate_treelikelihood(tip_partials, weights, indices, mats, freqs, props):
+    partials = calculate_partials(tip_partials, indices, mats, props)
     return np.sum(
         np.log(freqs @ np.sum(props * partials[indices[-1][0]], -3)) * weights,
         axis=-1,

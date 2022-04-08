@@ -13,7 +13,12 @@ from phylojax.coalescent import ConstantCoalescent
 from phylojax.io import read_tree, read_tree_and_alignment
 from phylojax.sitepattern import get_dna_leaves_partials_compressed
 from phylojax.substitution import JC69
-from phylojax.tree import distance_to_ratios, log_abs_det_jacobian, transform_ratios
+from phylojax.tree import (
+    distance_to_ratios,
+    log_abs_det_jacobian,
+    preorder_indices,
+    transform_ratios,
+)
 
 jax.config.update("jax_platform_name", "cpu")
 jax.config.update("jax_enable_x64", True)
@@ -141,6 +146,45 @@ def fluA_unrooted(args):
             )
             args.output.write(f"treelikelihood,gradient1,on,{t[3]},\n")
 
+    pre_indices = preorder_indices(tree)
+    indices_tup = (
+        np.array(indices, dtype=np.int32),
+        np.array(pre_indices, dtype=np.int32),
+    )
+
+    def fn_custom(bls):
+        return treelikelihood.calculate_treelikelihood_custom(
+            bls,
+            tip_partials,
+            weights,
+            indices_tup,
+            jc69_model,
+            proportions,
+        )
+
+    print("  Numerical")
+
+    calculate_treelikelihood_custom_jit = jit(fn_custom)
+    t, log_p, grad_log_p = test(
+        calculate_treelikelihood_custom_jit,
+        jit(grad(fn_custom)),
+        branch_lengths,
+        replicates,
+        args.separate,
+    )
+
+    if args.output:
+        args.output.write(
+            f"treelikelihoodNumerical,evaluation,on,{t[0]},{log_p.squeeze().tolist()}\n"
+        )
+        args.output.write(f"treelikelihoodNumerical,gradient,on,{t[1]},\n")
+        if len(t) > 2:
+            args.output.write(
+                f"treelikelihoodNumerical,evaluation1,on,{t[2]},"
+                f"{log_p.squeeze().tolist()}\n"
+            )
+            args.output.write(f"treelikelihoodNumerical,gradient1,on,{t[3]},\n")
+
     if args.all:
         print("  JIT on grad(jit(fn))")
         test(
@@ -187,6 +231,7 @@ def test(fn, g, bls, replicates, separate):
         replicates = replicates - 1
         start = timer()
         log_p = fn(bls)
+        log_p.block_until_ready()
         end = timer()
         t0 = end - start
         print(f"  First evaluation: {t0}")
@@ -194,6 +239,7 @@ def test(fn, g, bls, replicates, separate):
     start = timer()
     for _ in range(replicates):
         log_p = fn(bls)
+        log_p.block_until_ready()
     end = timer()
     t1 = end - start
     times.append(t1)
@@ -201,7 +247,8 @@ def test(fn, g, bls, replicates, separate):
 
     if separate:
         start = timer()
-        _ = g(bls)
+        grad_log_p = g(bls)
+        grad_log_p.block_until_ready()
         end = timer()
         t2 = end - start
         print(f"  First gradient evaluation: {t2} ({log_p})")
@@ -209,6 +256,7 @@ def test(fn, g, bls, replicates, separate):
     start = timer()
     for _ in range(replicates):
         grad_log_p = g(bls)
+        grad_log_p.block_until_ready()
     end = timer()
     t3 = end - start
     times.append(t3)
@@ -258,6 +306,7 @@ def ratio_transform_jacobian(args):
     if args.separate:
         start = timer()
         log_det_jac = fn(ratios_root_height)
+        log_det_jac.block_until_ready()
         end = timer()
         print(f"  First evaluation: {end-start} ({log_det_jac})")
         if args.output:
@@ -269,6 +318,7 @@ def ratio_transform_jacobian(args):
     start = timer()
     for _ in range(replicates):
         log_det_jac = fn(ratios_root_height)
+        log_det_jac.block_until_ready()
     end = timer()
     print(
         f"  {replicates} evaluations: {end - start} ({log_det_jac.squeeze().tolist()})"
@@ -284,6 +334,7 @@ def ratio_transform_jacobian(args):
     if args.separate:
         start = timer()
         log_det_jac_gradient = vjp_fn(np.ones(y.shape))[0]
+        log_det_jac_gradient.block_until_ready()
         end = timer()
         print(f"  First gradient evaluation: {end-start}")
         if args.output:
@@ -294,6 +345,7 @@ def ratio_transform_jacobian(args):
     start = timer()
     for _ in range(replicates):
         log_det_jac_gradient = vjp_fn(np.ones(y.shape))[0]
+        log_det_jac_gradient.block_until_ready()
     end = timer()
     print(f"  {replicates} gradient evaluations: {end - start}")
 
@@ -308,6 +360,7 @@ def ratio_transform_jacobian(args):
     if args.separate:
         start = timer()
         log_det_jac = fn_jit(ratios_root_height)
+        log_det_jac.block_until_ready()
         end = timer()
         print(f"  First evaluation: {end-start} ({log_det_jac})")
         if args.output:
@@ -319,6 +372,7 @@ def ratio_transform_jacobian(args):
     start = timer()
     for _ in range(replicates):
         log_det_jac = fn_jit(ratios_root_height)
+        log_det_jac.block_until_ready()
     end = timer()
     print(f"  {replicates} evaluations: {end - start} ({log_det_jac.tolist()})")
 
@@ -332,6 +386,7 @@ def ratio_transform_jacobian(args):
     if args.separate:
         start = timer()
         log_det_jac_gradient = fn_jit_grad(np.ones(y.shape))[0]
+        log_det_jac_gradient.block_until_ready()
         end = timer()
         print(f"  First gradient evaluation: {end-start}")
         if args.output:
@@ -340,6 +395,7 @@ def ratio_transform_jacobian(args):
     start = timer()
     for _ in range(replicates):
         log_det_jac_gradient = fn_jit_grad(np.ones(y.shape))[0]
+        log_det_jac_gradient.block_until_ready()
     end = timer()
     print(f"  {replicates} gradient evaluations: {end - start}")
 
@@ -429,6 +485,7 @@ def constant_coalescent(args):
     if args.separate:
         start = timer()
         log_p = log_prob_coalescent(node_heights, theta)
+        log_p.block_until_ready()
         end = timer()
         print(f"  First evaluation: {end-start} ({log_p})")
         if args.output:
@@ -439,6 +496,7 @@ def constant_coalescent(args):
     start = timer()
     for _ in range(replicates):
         log_p = log_prob_coalescent(node_heights, theta)
+        log_p.block_until_ready()
     end = timer()
     t1 = end - start
     print(f"  {replicates} evaluations: {t1} ({log_p.squeeze().tolist()})")
@@ -451,7 +509,7 @@ def constant_coalescent(args):
     grad_fn = grad(log_prob_coalescent, (0, 1))
 
     start = timer()
-    _ = grad_fn(node_heights, theta)
+    gradient = grad_fn(node_heights, theta)
     end = timer()
     print(f"  First gradient evaluation: {end-start}")
     if args.output:
@@ -459,7 +517,7 @@ def constant_coalescent(args):
 
     start = timer()
     for _ in range(replicates):
-        _ = grad_fn(node_heights, theta)
+        gradient = grad_fn(node_heights, theta)
 
     end = timer()
     print(f"  {replicates} gradient evaluations: {end - start}")
@@ -474,6 +532,7 @@ def constant_coalescent(args):
     if args.separate:
         start = timer()
         log_p = log_prob_jit(node_heights, theta)
+        log_p.block_until_ready()
         end = timer()
         print(f"  First evaluation: {end-start} ({log_p})")
         if args.output:
@@ -483,7 +542,8 @@ def constant_coalescent(args):
 
     start = timer()
     for _ in range(replicates):
-        log_prob_jit(node_heights, theta)
+        gradient = log_prob_jit(node_heights, theta)
+        gradient.block_until_ready()
     end = timer()
     print(f"  {replicates} evaluations: {end - start} ({log_p.squeeze().tolist()})")
 
@@ -495,7 +555,7 @@ def constant_coalescent(args):
     fn_jit_grad = jit(grad_fn)
 
     start = timer()
-    _ = fn_jit_grad(node_heights, theta)
+    gradient = fn_jit_grad(node_heights, theta)
     end = timer()
     print(f"  First gradient evaluation: {end - start}")
     if args.output:
@@ -503,7 +563,7 @@ def constant_coalescent(args):
 
     start = timer()
     for _ in range(replicates):
-        _ = fn_jit_grad(node_heights, theta)
+        gradient = fn_jit_grad(node_heights, theta)
     end = timer()
     print(f"  {replicates} gradient evaluations: {end - start}")
 
