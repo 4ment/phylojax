@@ -17,7 +17,12 @@ from .io import read_tree_and_alignment
 from .prior import ctmc_scale, dirichlet_logpdf
 from .sitepattern import get_dna_leaves_partials_compressed
 from .substitution import GTR, JC69
-from .tree import NodeHeightTransform, heights_to_branch_lengths, transform_ratios
+from .tree import (
+    NodeHeightTransform,
+    distance_to_ratios,
+    heights_to_branch_lengths,
+    transform_ratios,
+)
 from .treelikelihood import calculate_treelikelihood
 
 config.update("jax_enable_x64", True)
@@ -35,6 +40,14 @@ def create_parser():
         choices=["JC69", "GTR"],
         default="JC69",
         help="""Substitution model [default: %(default)s]""",
+    )
+    parser.add_argument(
+        '--heights_init',
+        choices=['tree'],
+        help="""initialize node heights using input tree file""",
+    )
+    parser.add_argument(
+        '--rate_init', type=float, help="""initialize substitution rate"""
     )
     parser.add_argument(
         "-a",
@@ -155,7 +168,7 @@ def joint_likelihood(
         weights,
         post_indexing,
         np.expand_dims(mats, -3),
-        np.expand_dims(frequencies, axis=-3),
+        np.expand_dims(frequencies, axis=-2),
         np.array([[[1.0]]]),
     )
     return log_p + log_prior
@@ -495,6 +508,9 @@ def run(arg):
 
     partials = np.array(partials[:taxa_count])
 
+    if arg.heights_init is not None:
+        ratios, root_height, bounds = distance_to_ratios(tree)
+
     if arg.algorithm == "map":
         if True:
             key = jax.random.PRNGKey(arg.seed)
@@ -529,6 +545,17 @@ def run(arg):
         clock_sigma = np.array([-5.0])
         theta_mu = np.array([3.0])
         theta_sigma = np.array([-2.0])
+
+        if arg.heights_init is not None:
+            ratios_mu = SigmoidTransform().inverse(ratios)
+            ratios_sigma = np.log(np.repeat(1.0e-6, ratios_mu.shape[-1]))
+            root_mu, root_sigma = np.log(root_height - max(bounds)), np.log(
+                np.array([1.0e-6])
+            )
+
+        if arg.rate_init is not None:
+            rate = np.array([arg.rate_init])
+            clock_mu, clock_sigma = np.log(rate), np.log(rate * 0.01)
 
         mus = np.concatenate(
             (

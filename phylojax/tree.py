@@ -1,6 +1,8 @@
 import jax.numpy as np
 import jax.ops
 
+from phylojax.transforms import SigmoidTransform
+
 
 def postorder_indices(tree):
     indices = []
@@ -23,6 +25,19 @@ def preorder_indices(tree):
             sibling = node.sibling_nodes()[0]
             indices.append((node.index, sibling.index, node.parent_node.index))
     return indices
+
+
+def heights_to_ratios(tree, internal_heights, bounds):
+    preorder = np.array(
+        [
+            (node.parent_node.index, node.index)
+            for node in tree.preorder_node_iter()
+            if node != tree.seed_node
+        ]
+    )
+    ratios_root_height = transform_ratios_inv(internal_heights, bounds, preorder)
+    ratios = SigmoidTransform().inverse(ratios_root_height[..., :-1])
+    return ratios, ratios_root_height[..., -1]
 
 
 def distance_to_ratios(tree, eps=1.0e-6):
@@ -85,6 +100,30 @@ def transform_ratios(ratios_root_height, bounds, indexing):
         )
 
     return jax.lax.fori_loop(0, len(indexing), f, heights)
+
+
+def transform_ratios_inv(internal_heights, bounds, indices):
+    taxa_count = internal_heights.shape[-1] + 1
+    bounds = bounds[indices[1, taxa_count:]]
+    return np.concatenate(
+        (
+            (
+                internal_heights[
+                    ...,
+                    indices[1, taxa_count:] - taxa_count,
+                ]
+                - bounds
+            )
+            / (
+                internal_heights[
+                    ...,
+                    indices[0, taxa_count:] - taxa_count,
+                ]
+                - bounds
+            ),
+            internal_heights[..., -1:],
+        )
+    )
 
 
 def log_abs_det_jacobian(node_heights, indices, bounds):

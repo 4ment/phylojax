@@ -6,8 +6,9 @@ from dendropy import DnaCharacterMatrix, Tree
 from .tree import setup_dates, setup_indexes
 
 
-def read_tree(tree_path, dated=True, heterochornous=True):
-    taxa = dendropy.TaxonNamespace()
+def read_tree(
+    tree_path, dated=True, heterochornous=True, taxa=dendropy.TaxonNamespace()
+):
     tree_format = "newick"
     with open(tree_path) as fp:
         if next(fp).upper().startswith("#NEXUS"):

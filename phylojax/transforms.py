@@ -1,12 +1,15 @@
 import jax.numpy as jnp
 from jax.nn import log_sigmoid, softplus
-from jax.scipy.special import expit
+from jax.scipy.special import expit, logit
 
 
 class SigmoidTransform:
     def __call__(self, x):
         finfo = jnp.finfo(jnp.result_type(x))
         return jnp.clip(expit(x), a_min=finfo.tiny, a_max=1.0 - finfo.eps)
+
+    def inverse(self, y):
+        return logit(y)
 
     def log_abs_det_jacobian(self, x, y):
         return -softplus(x) - softplus(-x)
