@@ -375,7 +375,7 @@ def advi_rooted(x, arg, **kwargs):
         elbo, rng = loss(x, arg.elbo_samples, rng, fn, **kwargs)
         print("Starting ELBO {}".format(-elbo))
 
-    for epoch in range(arg.iter):
+    for epoch in range(1, arg.iter + 1):
         x = get_params(opt_state)
         gradient, rng = loss(x, arg.grad_samples, rng, grad_fn, **kwargs)
         opt_state = update(epoch, gradient, opt_state)
