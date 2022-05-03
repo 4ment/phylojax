@@ -142,7 +142,8 @@ def fluA_unrooted(args, subst_model_type):
 
     if args.output:
         args.output.write(
-            f"treelikelihood{subst_model_type},evaluation,off,{t[0]},{log_p.squeeze().tolist()}\n"
+            f"treelikelihood{subst_model_type},evaluation,off,{t[0]},"
+            f"{log_p.squeeze().tolist()}\n"
         )
         args.output.write(f"treelikelihood{subst_model_type},gradient,off,{t[1]},\n")
 
@@ -167,12 +168,14 @@ def fluA_unrooted(args, subst_model_type):
 
     if args.output:
         args.output.write(
-            f"treelikelihood{subst_model_type},evaluation,on,{t[0]},{log_p.squeeze().tolist()}\n"
+            f"treelikelihood{subst_model_type},evaluation,on,{t[0]},"
+            f"{log_p.squeeze().tolist()}\n"
         )
         args.output.write(f"treelikelihood{subst_model_type},gradient,on,{t[1]},\n")
         if len(t) > 2:
             args.output.write(
-                f"treelikelihood{subst_model_type},evaluation1,on,{t[2]},{log_p.squeeze().tolist()}\n"
+                f"treelikelihood{subst_model_type},evaluation1,on,{t[2]},"
+                f"{log_p.squeeze().tolist()}\n"
             )
             args.output.write(
                 f"treelikelihood{subst_model_type},gradient1,on,{t[3]},\n"
@@ -208,15 +211,16 @@ def fluA_unrooted(args, subst_model_type):
 
         if args.output:
             args.output.write(
-                f"treelikelihoodNumerical,evaluation,on,{t[0]},{log_p.squeeze().tolist()}\n"
+                f"treelikelihoodAnalytic,evaluation,on,{t[0]},"
+                f"{log_p.squeeze().tolist()}\n"
             )
-            args.output.write(f"treelikelihoodNumerical,gradient,on,{t[1]},\n")
+            args.output.write(f"treelikelihoodAnalytic,gradient,on,{t[1]},\n")
             if len(t) > 2:
                 args.output.write(
                     f"treelikelihoodAnalytic,evaluation1,on,{t[2]},"
                     f"{log_p.squeeze().tolist()}\n"
                 )
-                args.output.write(f"treelikelihoodNumerical,gradient1,on,{t[3]},\n")
+                args.output.write(f"treelikelihoodAnalytic,gradient1,on,{t[3]},\n")
 
     if args.all and subst_model_type == 'JC69':
         jc69_model = JC69()
