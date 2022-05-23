@@ -489,12 +489,17 @@ def ratio_transform(args):
         transform_ratios(ratios_root_height, bounds, indices_for_ratios)
         end = timer()
         print(f"  First evaluation: {end - start}")
+        if args.output:
+            args.output.write(f"ratio_transform,evaluation1,off,{end - start},\n")
 
     start = timer()
     for _ in range(replicates):
         transform_ratios(ratios_root_height, bounds, indices_for_ratios)
     end = timer()
     print(f"  {replicates} evaluations: {end - start}")
+
+    if args.output:
+        args.output.write(f"ratio_transform,evaluation,off,{end - start},\n")
 
     def fn(x):
         return transform_ratios(x, bounds, indices_for_ratios)
@@ -528,12 +533,17 @@ def ratio_transform(args):
         fn_jit(ratios_root_height)
         end = timer()
         print(f"  First evaluation: {end - start}")
+        if args.output:
+            args.output.write(f"ratio_transform,evaluation1,on,{end - start},\n")
 
     start = timer()
     for _ in range(replicates):
         fn_jit(ratios_root_height)
     end = timer()
     print(f"  {replicates} evaluations: {end - start}")
+
+    if args.output:
+        args.output.write(f"ratio_transform,evaluation,on,{end - start},\n")
 
     fn_vjp_jit = jit(fn_vjp)
     if args.separate:

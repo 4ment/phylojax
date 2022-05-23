@@ -14,7 +14,7 @@ from phylojax.transforms import SigmoidTransform, StickBreakingTransform
 
 from .coalescent import ConstantCoalescent
 from .io import read_tree_and_alignment
-from .prior import ctmc_scale, dirichlet_logpdf
+from .prior import dirichlet_logpdf
 from .sitepattern import get_dna_leaves_partials_compressed
 from .substitution import GTR, JC69
 from .tree import (
@@ -161,7 +161,9 @@ def joint_likelihood(
         axis=-1,
     )
 
-    log_prior = coalescent.log_prob(heights) - np.log(theta) + ctmc_scale(bls, clock)
+    log_prior = (
+        coalescent.log_prob(heights) - np.log(theta) + np.log(1000.0) - 1000.0 * clock
+    )
 
     log_p = calculate_treelikelihood(
         partials,
@@ -310,7 +312,7 @@ def elbo_fn_gtr(
         dirichlet_logpdf(x_rates, np.ones(6)), -1
     ) + np.expand_dims(dirichlet_logpdf(x_freqs, np.ones(4)), -1)
 
-    log_det_jacobians += +np.expand_dims(
+    log_det_jacobians += np.expand_dims(
         stick_transform.log_abs_det_jacobian(z_rates, x_rates), -1
     ) + np.expand_dims(stick_transform.log_abs_det_jacobian(z_freqs, x_freqs), -1)
     entropy += (0.5 + 0.5 * np.log(2 * np.pi) + params[..., offset:, 1]).sum()
