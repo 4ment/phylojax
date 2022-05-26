@@ -616,18 +616,19 @@ def constant_coalescent(args):
 
     grad_fn = grad(log_prob_coalescent, (0, 1))
 
-    start = timer()
-    gradient = grad_fn(node_heights, theta)
-    end = timer()
-    print(f"  First gradient evaluation: {end-start}")
-    if args.output:
-        args.output.write(f"coalescent,gradient1,off,{end - start},\n")
+    if args.separate:
+        start = timer()
+        gradient = grad_fn(node_heights, theta)
+        jax.tree_map(lambda x: x.block_until_ready(), gradient)
+        end = timer()
+        print(f"  First gradient evaluation: {end-start}")
+        if args.output:
+            args.output.write(f"coalescent,gradient1,off,{end - start},\n")
 
     start = timer()
     for _ in range(replicates):
         gradient = grad_fn(node_heights, theta)
         jax.tree_map(lambda x: x.block_until_ready(), gradient)
-
     end = timer()
     print(f"  {replicates} gradient evaluations: {end - start}")
 
@@ -651,8 +652,8 @@ def constant_coalescent(args):
 
     start = timer()
     for _ in range(replicates):
-        gradient = log_prob_jit(node_heights, theta)
-        gradient.block_until_ready()
+        log_p = log_prob_jit(node_heights, theta)
+        log_p.block_until_ready()
     end = timer()
     print(f"  {replicates} evaluations: {end - start} ({log_p.squeeze().tolist()})")
 
@@ -663,16 +664,19 @@ def constant_coalescent(args):
 
     fn_jit_grad = jit(grad_fn)
 
-    start = timer()
-    gradient = fn_jit_grad(node_heights, theta)
-    end = timer()
-    print(f"  First gradient evaluation: {end - start}")
-    if args.output:
-        args.output.write(f"coalescent,gradient1,on,{end - start},\n")
+    if args.separate:
+        start = timer()
+        gradient = fn_jit_grad(node_heights, theta)
+        jax.tree_map(lambda x: x.block_until_ready(), gradient)
+        end = timer()
+        print(f"  First gradient evaluation: {end - start}")
+        if args.output:
+            args.output.write(f"coalescent,gradient1,on,{end - start},\n")
 
     start = timer()
     for _ in range(replicates):
         gradient = fn_jit_grad(node_heights, theta)
+        jax.tree_map(lambda x: x.block_until_ready(), gradient)
     end = timer()
     print(f"  {replicates} gradient evaluations: {end - start}")
 
